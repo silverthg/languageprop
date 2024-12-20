@@ -2,70 +2,53 @@ import sys
 import pandas as pd
 import numpy as np
 from PyQt5.QtWidgets import (
-    QApplication,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QFileDialog,
-    QLabel,
-    QTextEdit,
-    QSplitter,
-    QComboBox, QTableWidget, QTableWidgetItem, QDialog,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QFileDialog, QTextEdit, QSplitter, QLabel
 )
 from PyQt5.QtCore import Qt
-from nltk.stem import SnowballStemmer
-import re
-import pymorphy2
-from rapidfuzz.fuzz import ratio, partial_ratio
-from rapidfuzz.distance import JaroWinkler
 import matplotlib.pyplot as plt
-import seaborn as sns
-import openpyxl
-
 
 class WordProcessingApp(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-        self.words_set1 = set()
-        self.words_set2 = set()
-        self.morph = pymorphy2.MorphAnalyzer()
-        self.stemmer = SnowballStemmer("russian")
-
-    def lemmatize_word(self, word):
-        return self.morph.parse(word)[0].normal_form
+        self.words_set1 = []
+        self.words_set2 = []
+        self.last_matrix = None
+        self.sorted_matrix = None
+        self.row_indices = []
+        self.dictionary = []
 
     def initUI(self):
-        self.setWindowTitle("Language Prop")
-        self.resize(1000, 600)
+        self.setWindowTitle("Приложение для сравнения слов")
+        self.resize(1200, 700)
 
         main_layout = QVBoxLayout()
 
         button_layout = QHBoxLayout()
-        self.load_button1 = QPushButton("Загрузить первый CSV файл")
-        self.load_button1.clicked.connect(self.load_file1)
+        self.load_button1 = QPushButton("Загрузить список A")
+        self.load_button1.clicked.connect(self.load_list1)
         button_layout.addWidget(self.load_button1)
 
-        self.load_button2 = QPushButton("Загрузить второй CSV файл")
-        self.load_button2.clicked.connect(self.load_file2)
+        self.load_button2 = QPushButton("Загрузить список B")
+        self.load_button2.clicked.connect(self.load_list2)
         button_layout.addWidget(self.load_button2)
 
-        self.metric_selector = QComboBox()
-        self.metric_selector.addItems(["Ratcliff", "Levenshtein", "Jaro-Winkler"])
-        button_layout.addWidget(self.metric_selector)
+        self.export_button = QPushButton("Экспорт матрицы в Excel")
+        self.export_button.clicked.connect(self.export_to_excel)
+        button_layout.addWidget(self.export_button)
+
+        self.export_dict_button = QPushButton("Экспорт словаря в Excel")
+        self.export_dict_button.clicked.connect(self.export_dictionary_to_excel)
+        button_layout.addWidget(self.export_dict_button)
 
         self.process_button = QPushButton("Обработать слова")
         self.process_button.clicked.connect(self.process_words)
         button_layout.addWidget(self.process_button)
 
-        self.export_button = QPushButton("Экспорт матрицы в Excel")
-        self.export_button.clicked.connect(self.export_matrix_to_excel)
-        button_layout.addWidget(self.export_button)
-
-        self.clear_button = QPushButton("Очистить результаты")
-        self.clear_button.clicked.connect(self.clear_results)
-        button_layout.addWidget(self.clear_button)
+        self.graph_button = QPushButton("Построить график средних")
+        self.graph_button.clicked.connect(self.plot_averages_graph)
+        button_layout.addWidget(self.graph_button)
 
         main_layout.addLayout(button_layout)
 
@@ -73,26 +56,21 @@ class WordProcessingApp(QWidget):
 
         self.words_area1 = QTextEdit()
         self.words_area1.setReadOnly(True)
-        splitter.addWidget(self.create_labeled_area("Слова из файла 1", self.words_area1))
+        splitter.addWidget(self.create_labeled_area("Список A", self.words_area1))
 
         self.words_area2 = QTextEdit()
         self.words_area2.setReadOnly(True)
-        splitter.addWidget(self.create_labeled_area("Слова из файла 2", self.words_area2))
-
-        self.result_area = QTextEdit()
-        self.result_area.setReadOnly(True)
-        splitter.addWidget(self.create_labeled_area("Сопоставление слов", self.result_area))
+        splitter.addWidget(self.create_labeled_area("Список B", self.words_area2))
 
         self.matrix_area = QTextEdit()
         self.matrix_area.setReadOnly(True)
-        splitter.addWidget(self.create_labeled_area("Матрица схожести", self.matrix_area))
+        splitter.addWidget(self.create_labeled_area("Результаты", self.matrix_area))
 
-        self.heatmap_button = QPushButton("Показать тепловую карту")
-        self.heatmap_button.clicked.connect(self.show_heatmap)
-        button_layout.addWidget(self.heatmap_button)
+        self.dictionary_area = QTextEdit()
+        self.dictionary_area.setReadOnly(True)
+        splitter.addWidget(self.create_labeled_area("Словарь", self.dictionary_area))
 
         main_layout.addWidget(splitter)
-
         self.setLayout(main_layout)
 
     def create_labeled_area(self, label_text, text_edit):
@@ -104,184 +82,114 @@ class WordProcessingApp(QWidget):
         container.setLayout(area_layout)
         return container
 
-    def load_file1(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите CSV файл", "", "CSV files (*.csv)")
+    def load_list1(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Загрузить список A", "", "CSV Files (*.csv)")
         if file_path:
-            self.words_set1 = self.load_words_from_csv(file_path)
+            self.words_set1 = pd.read_csv(file_path, header=None)[0].tolist()
             self.words_area1.setText("\n".join(self.words_set1))
 
-    def load_file2(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите CSV файл", "", "CSV files (*.csv)")
+    def load_list2(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Загрузить список B", "", "CSV Files (*.csv)")
         if file_path:
-            self.words_set2 = self.load_words_from_csv(file_path)
+            self.words_set2 = pd.read_csv(file_path, header=None)[0].tolist()
             self.words_area2.setText("\n".join(self.words_set2))
 
-    def load_words_from_csv(self, file_path):
-        df = pd.read_csv(file_path, header=None)
-        words = set(df[0].tolist())
-        cleaned_words = {self.clean_word(word) for word in words if self.clean_word(word)}
-        lemmatized_words = {self.lemmatize_word(word) for word in cleaned_words}
-        return set(list(lemmatized_words)[:100])
-
-    def clean_word(self, word):
-        word = re.sub(r"[^\w\s]", "", word)
-        word = re.sub(r"\d+", "", word)
-        return word.strip().lower()
-
     def process_words(self):
-        selected_metric = self.metric_selector.currentText().lower()
+        if not self.words_set1 or not self.words_set2:
+            self.matrix_area.setText("Пожалуйста, загрузите оба списка.")
+            return
 
-        set1_list = list(self.words_set1)
-        set2_list = list(self.words_set2)
+        self.last_matrix = self.create_similarity_matrix(self.words_set1, self.words_set2)
 
-        matrix = self.create_similarity_matrix(set1_list, set2_list, metric=selected_metric)
+        # Вычисление дополнительных метрик
+        avg_value = np.mean(self.last_matrix)
+        row_maxes = np.max(self.last_matrix, axis=1)
+        col_maxes = np.max(self.last_matrix, axis=0)
+        avg_row_max = np.mean(row_maxes)
+        avg_col_max = np.mean(col_maxes)
+        var_row_max = np.var(row_maxes)
+        var_col_max = np.var(col_maxes)
 
-        self.display_matrix(matrix, set1_list, set2_list)
+        row_variances = np.var(self.last_matrix, axis=1)
+        col_variances = np.var(self.last_matrix, axis=0)
 
-        sorted_matches = self.find_best_matches(matrix, set1_list, set2_list)
+        # Сортировка строк матрицы
+        self.row_indices = np.argsort(-row_maxes)
+        self.sorted_matrix = self.last_matrix[self.row_indices]
 
-        self.last_matrix = matrix
-        self.last_set1 = set1_list
-        self.last_set2 = set2_list
-        result = "\n".join(f"{w1} <-> {w2}: {score:.2f}" for w1, w2, score in sorted_matches)
-        self.result_area.setText(result)
+        # Создание словаря на основе 10 наиболее похожих пар слов
+        flat_indices = np.dstack(np.unravel_index(np.argsort(-self.last_matrix.ravel()), self.last_matrix.shape))[0]
+        self.dictionary = [
+            (self.words_set1[i], self.words_set2[j], self.last_matrix[i, j])
+            for i, j in flat_indices[:10]
+        ]
 
-    def display_matrix(self, matrix, set1_list, set2_list):
-        max_word_length = max(max(map(len, set1_list)), max(map(len, set2_list)), 8)
-        col_width = max_word_length + 2
+        # Отображение результатов
+        metrics_text = (f"Среднее значение по матрице: {avg_value:.2f}\n"
+                        f"Среднее максимумов по строкам: {avg_row_max:.2f}\n"
+                        f"Среднее максимумов по столбцам: {avg_col_max:.2f}\n"
+                        f"Дисперсия по строкам: {var_row_max:.2f}\n"
+                        f"Дисперсия по столбцам: {var_col_max:.2f}\n"
+                        f"Дисперсия строк матрицы: {np.mean(row_variances):.2f}\n"
+                        f"Дисперсия столбцов матрицы: {np.mean(col_variances):.2f}")
+        self.matrix_area.setText(metrics_text)
 
-        header = " " * col_width + "".join(f"{word:<{col_width}}" for word in set2_list)
-        matrix_str = header + "\n"
+        dictionary_text = "\n".join(f"{word1} {word2} {coef:.2f}" for word1, word2, coef in self.dictionary)
+        self.dictionary_area.setText(dictionary_text)
 
-        for i, row in enumerate(matrix):
-            row_str = f"{set1_list[i]:<{col_width}}" + "".join(f"{val:<{col_width}.2f}" for val in row)
-            matrix_str += row_str + "\n"
-
-        self.matrix_area.setText(matrix_str)
-
-    def create_similarity_matrix(self, set1_list, set2_list, metric="ratcliff"):
-        matrix = np.zeros((len(set1_list), len(set2_list)))
-
-        for i, word1 in enumerate(set1_list):
-            for j, word2 in enumerate(set2_list):
-                if metric == "ratcliff":
-                    matrix[i][j] = self.ratcliff_obershelp_coefficient(word1, word2)
-                elif metric == "levenshtein":
-                    matrix[i][j] = self.levenshtein_similarity(word1, word2)
-                elif metric == "jaro_winkler":
-                    matrix[i][j] = self.jaro_winkler_similarity(word1, word2)
-
+    def create_similarity_matrix(self, list1, list2):
+        matrix = np.zeros((len(list1), len(list2)))
+        for i, word1 in enumerate(list1):
+            for j, word2 in enumerate(list2):
+                matrix[i, j] = self.ratcliff_similarity(word1, word2)
         return matrix
 
-    def show_matrix_window(self):
-        if not hasattr(self, "last_matrix") or self.last_matrix is None:
-            self.result_area.setText("Сначала обработайте слова для создания матрицы.")
+    def ratcliff_similarity(self, word1, word2):
+        # Алгоритм поиска наибольшей общей подстроки без учета порядка букв
+        common = []
+        chars1 = list(word1)
+        chars2 = list(word2)
+        for char in chars1:
+            if char in chars2:
+                common.append(char)
+                chars2.remove(char)
+        return 2 * len(common) / (len(word1) + len(word2))
+
+    def export_to_excel(self):
+        if self.sorted_matrix is None:
+            self.matrix_area.setText("Нет данных для экспорта. Пожалуйста, обработайте слова.")
             return
 
-        matrix_dialog = QDialog(self)
-        matrix_dialog.setWindowTitle("Матрица схожести")
-        matrix_dialog.resize(800, 600)
-
-        table = QTableWidget(matrix_dialog)
-        table.setRowCount(len(self.last_set1))
-        table.setColumnCount(len(self.last_set2))
-        table.setHorizontalHeaderLabels(self.last_set2)
-        table.setVerticalHeaderLabels(self.last_set1)
-
-        for i, row in enumerate(self.last_matrix):
-            for j, value in enumerate(row):
-                table.setItem(i, j, QTableWidgetItem(f"{value:.2f}"))
-
-        table.resizeColumnsToContents()
-        table.resizeRowsToContents()
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setParent(matrix_dialog)
-        table.setGeometry(10, 10, 780, 580)
-
-        matrix_dialog.exec_()
-
-    def ratcliff_obershelp_coefficient(self, s1, s2):
-        matches = sum(1 for a, b in zip(s1, s2) if a == b)
-        return 2.0 * matches / (len(s1) + len(s2))
-
-    def levenshtein_similarity(self, word1, word2):
-        return ratio(word1, word2)
-
-    def jaro_winkler_similarity(self, word1, word2):
-        return JaroWinkler.similarity(word1, word2)
-
-    def find_best_matches(self, matrix, set1_list, set2_list):
-        matches = []
-        visited_set2 = set()
-
-        while len(matches) < min(len(set1_list), len(set2_list)):
-            max_value = -1
-            max_indices = (-1, -1)
-
-            for i in range(len(set1_list)):
-                for j in range(len(set2_list)):
-                    if j in visited_set2:
-                        continue
-                    if matrix[i][j] > max_value:
-                        max_value = matrix[i][j]
-                        max_indices = (i, j)
-
-            if max_indices == (-1, -1):
-                break
-
-            i, j = max_indices
-            matches.append((set1_list[i], set2_list[j], matrix[i][j]))
-            visited_set2.add(j)
-
-        return matches
-
-    def show_heatmap(self):
-        if not hasattr(self, "last_matrix") or self.last_matrix is None:
-            self.result_area.setText("Сначала обработайте слова для создания матрицы.")
-            return
-
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(
-            self.last_matrix,
-            annot=False,
-            xticklabels=self.last_set2,
-            yticklabels=self.last_set1,
-            cmap="coolwarm",
-            cbar_kws={'label': 'Схожесть'}
-        )
-        plt.title("Тепловая карта схожести слов")
-        plt.xlabel("Слова из файла 2")
-        plt.ylabel("Слова из файла 1")
-        plt.xticks(rotation=45, ha="right")
-        plt.tight_layout()
-        plt.show()
-
-    def export_matrix_to_excel(self):
-        if not hasattr(self, "last_matrix") or self.last_matrix is None:
-            self.result_area.setText("Сначала обработайте слова для создания матрицы.")
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить файл", "", "Excel Files (*.xlsx)")
-
+        file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт матрицы в Excel", "", "Excel Files (*.xlsx)")
         if file_path:
-            df = pd.DataFrame(
-                self.last_matrix,
-                index=self.last_set1,
-                columns=self.last_set2
-            )
+            df = pd.DataFrame(self.sorted_matrix,
+                              index=[self.words_set1[i] for i in self.row_indices],
+                              columns=self.words_set2)
+            df.to_excel(file_path, sheet_name="Матрица")
 
-            try:
-                df.to_excel(file_path, sheet_name="Similarity Matrix")
-                self.result_area.setText(f"Матрица успешно экспортирована в файл:\n{file_path}")
-            except Exception as e:
-                self.result_area.setText(f"Ошибка при экспорте: {str(e)}")
+    def export_dictionary_to_excel(self):
+        if not self.dictionary:
+            self.matrix_area.setText("Нет данных для экспорта словаря. Пожалуйста, обработайте слова.")
+            return
 
-    def clear_results(self):
-        self.words_area1.clear()
-        self.words_area2.clear()
-        self.result_area.clear()
-        self.matrix_area.clear()
+        file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт словаря в Excel", "", "Excel Files (*.xlsx)")
+        if file_path:
+            dict_df = pd.DataFrame(self.dictionary, columns=["Слово A", "Слово B", "Коэффициент"])
+            dict_df.to_excel(file_path, sheet_name="Словарь", index=False)
 
+    def plot_averages_graph(self):
+        if self.sorted_matrix is None:
+            self.matrix_area.setText("Нет данных для построения графика. Пожалуйста, обработайте слова.")
+            return
+
+        col_means = np.mean(self.sorted_matrix, axis=0)
+        plt.figure(figsize=(10, 6))
+        plt.plot(range(1, len(col_means) + 1), col_means, marker="o")
+        plt.title("Средние значения по столбцам отсортированной матрицы")
+        plt.xlabel("Номер столбца")
+        plt.ylabel("Среднее значение")
+        plt.grid(True)
+        plt.show()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
