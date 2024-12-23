@@ -39,6 +39,10 @@ class WordProcessingApp(QWidget):
         self.export_button.clicked.connect(self.export_to_excel)
         button_layout.addWidget(self.export_button)
 
+        self.export_sorted_matrix_button = QPushButton("Экспорт отсортированной матрицы")
+        self.export_sorted_matrix_button.clicked.connect(self.export_sorted_matrix_to_excel)
+        button_layout.addWidget(self.export_sorted_matrix_button)
+
         self.export_dict_button = QPushButton("Экспорт словаря в Excel")
         self.export_dict_button.clicked.connect(self.export_dictionary_to_excel)
         button_layout.addWidget(self.export_dict_button)
@@ -102,40 +106,52 @@ class WordProcessingApp(QWidget):
 
         self.last_matrix = self.create_similarity_matrix(self.words_set1, self.words_set2)
 
-        # Вычисление дополнительных метрик
+        # Вычисление метрик
         avg_value = np.mean(self.last_matrix)
         row_maxes = np.max(self.last_matrix, axis=1)
         col_maxes = np.max(self.last_matrix, axis=0)
         avg_row_max = np.mean(row_maxes)
         avg_col_max = np.mean(col_maxes)
+        var_matrix = np.var(self.last_matrix)
         var_row_max = np.var(row_maxes)
         var_col_max = np.var(col_maxes)
-
-        row_variances = np.var(self.last_matrix, axis=1)
-        col_variances = np.var(self.last_matrix, axis=0)
 
         # Сортировка строк матрицы
         self.row_indices = np.argsort(-row_maxes)
         self.sorted_matrix = self.last_matrix[self.row_indices]
 
-        # Создание словаря на основе 10 наиболее похожих пар слов
+        avg_col_sorted = np.mean(self.sorted_matrix, axis=0)
+        avg_col_sorted_text = "\n".join(
+            f"Столбец {i + 1}: {value:.2f}" for i, value in enumerate(avg_col_sorted)
+        )
+
         flat_indices = np.dstack(np.unravel_index(np.argsort(-self.last_matrix.ravel()), self.last_matrix.shape))[0]
         self.dictionary = [
-            (self.words_set1[i], self.words_set2[j], self.last_matrix[i, j])
+            {
+                "Слово A": self.words_set1[i],
+                "Слово B": self.words_set2[j],
+                "Коэффициент": self.last_matrix[i, j],
+            }
             for i, j in flat_indices[:10]
         ]
 
-        # Отображение результатов
-        metrics_text = (f"Среднее значение по матрице: {avg_value:.2f}\n"
-                        f"Среднее максимумов по строкам: {avg_row_max:.2f}\n"
-                        f"Среднее максимумов по столбцам: {avg_col_max:.2f}\n"
-                        f"Дисперсия максимумов по строкам: {var_row_max:.2f}\n"
-                        f"Дисперсия максимумов по столбцам: {var_col_max:.2f}\n"
-                        f"Дисперсия строк матрицы: {np.mean(row_variances):.2f}\n"
-                        f"Дисперсия столбцов матрицы: {np.mean(col_variances):.2f}")
-        self.matrix_area.setText(metrics_text)
+        # Текстовое отображение метрик
+        results_text = (
+            f"Среднее по всему полю матрицы 〈ρ〉: {avg_value:.2f}\n"
+            f"Максимальные значения по строкам: {', '.join(map(str, row_maxes))}\n"
+            f"Максимальные значения по столбцам: {', '.join(map(str, col_maxes))}\n"
+            f"Средние от максимумов по строкам 〈ρ_i^max〉: {avg_row_max:.2f}\n"
+            f"Средние от максимумов по столбцам 〈ρ_j^max〉: {avg_col_max:.2f}\n"
+            f"Дисперсия матрицы D(ρ_ij): {var_matrix:.2f}\n"
+            f"Дисперсия максимумов по строкам D(ρ_i^max): {var_row_max:.2f}\n"
+            f"Дисперсия максимумов по столбцам D(ρ_j^max): {var_col_max:.2f}\n"
+            f"Средние по столбцам от отсортированной матрицы:\n{avg_col_sorted_text}"
+        )
+        self.matrix_area.setText(results_text)
 
-        dictionary_text = "\n".join(f"{word1} {word2} {coef:.2f}" for word1, word2, coef in self.dictionary)
+        dictionary_text = "\n".join(
+            f"{entry['Слово A']} - {entry['Слово B']}: {entry['Коэффициент']:.2f}" for entry in self.dictionary
+        )
         self.dictionary_area.setText(dictionary_text)
 
     def create_similarity_matrix(self, list1, list2):
@@ -168,6 +184,19 @@ class WordProcessingApp(QWidget):
                               columns=self.words_set2)
             df.to_excel(file_path, sheet_name="Матрица")
 
+    def export_sorted_matrix_to_excel(self):
+        if self.sorted_matrix is None:
+            self.matrix_area.setText("Нет данных для экспорта. Пожалуйста, обработайте слова.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт отсортированной матрицы в Excel", "",
+                                                   "Excel Files (*.xlsx)")
+        if file_path:
+            sorted_df = pd.DataFrame(self.sorted_matrix,
+                                     index=[f"Строка {i + 1}" for i in self.row_indices],
+                                     columns=[f"Столбец {j + 1}" for j in range(self.sorted_matrix.shape[1])])
+            sorted_df.to_excel(file_path, sheet_name="Отсортированная матрица")
+
     def export_dictionary_to_excel(self):
         if not self.dictionary:
             self.matrix_area.setText("Нет данных для экспорта словаря. Пожалуйста, обработайте слова.")
@@ -175,7 +204,7 @@ class WordProcessingApp(QWidget):
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт словаря в Excel", "", "Excel Files (*.xlsx)")
         if file_path:
-            dict_df = pd.DataFrame(self.dictionary, columns=["Слово A", "Слово B", "Коэффициент"])
+            dict_df = pd.DataFrame(self.dictionary)
             dict_df.to_excel(file_path, sheet_name="Словарь", index=False)
 
     def plot_averages_graph(self):
