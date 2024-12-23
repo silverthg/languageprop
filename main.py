@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 
+
 class WordProcessingApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -128,8 +129,8 @@ class WordProcessingApp(QWidget):
         metrics_text = (f"Среднее значение по матрице: {avg_value:.2f}\n"
                         f"Среднее максимумов по строкам: {avg_row_max:.2f}\n"
                         f"Среднее максимумов по столбцам: {avg_col_max:.2f}\n"
-                        f"Дисперсия по строкам: {var_row_max:.2f}\n"
-                        f"Дисперсия по столбцам: {var_col_max:.2f}\n"
+                        f"Дисперсия максимумов по строкам: {var_row_max:.2f}\n"
+                        f"Дисперсия максимумов по столбцам: {var_col_max:.2f}\n"
                         f"Дисперсия строк матрицы: {np.mean(row_variances):.2f}\n"
                         f"Дисперсия столбцов матрицы: {np.mean(col_variances):.2f}")
         self.matrix_area.setText(metrics_text)
@@ -156,14 +157,14 @@ class WordProcessingApp(QWidget):
         return 2 * len(common) / (len(word1) + len(word2))
 
     def export_to_excel(self):
-        if self.sorted_matrix is None:
+        if self.last_matrix is None:
             self.matrix_area.setText("Нет данных для экспорта. Пожалуйста, обработайте слова.")
             return
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт матрицы в Excel", "", "Excel Files (*.xlsx)")
         if file_path:
-            df = pd.DataFrame(self.sorted_matrix,
-                              index=[self.words_set1[i] for i in self.row_indices],
+            df = pd.DataFrame(self.last_matrix,
+                              index=self.words_set1,
                               columns=self.words_set2)
             df.to_excel(file_path, sheet_name="Матрица")
 
@@ -190,6 +191,7 @@ class WordProcessingApp(QWidget):
         plt.ylabel("Среднее значение")
         plt.grid(True)
         plt.show()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
