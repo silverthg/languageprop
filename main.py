@@ -125,12 +125,14 @@ class WordProcessingApp(QWidget):
             f"Столбец {i + 1}: {value:.2f}" for i, value in enumerate(avg_col_sorted)
         )
 
-        flat_indices = np.dstack(np.unravel_index(np.argsort(-self.last_matrix.ravel()), self.last_matrix.shape))[0]
+        top_columns = self.sorted_matrix[:, :10]
+
+        flat_indices = np.dstack(np.unravel_index(np.argsort(-top_columns.ravel()), top_columns.shape))[0]
         self.dictionary = [
             {
-                "Слово A": self.words_set1[i],
+                "Слово A": self.words_set1[self.row_indices[i]],
                 "Слово B": self.words_set2[j],
-                "Коэффициент": self.last_matrix[i, j],
+                "Коэффициент": self.sorted_matrix[i, j],
             }
             for i, j in flat_indices[:10]
         ]
