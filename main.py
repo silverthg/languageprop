@@ -19,6 +19,19 @@ class WordProcessingApp(QWidget):
         self.sorted_matrix = None
         self.row_indices = []
         self.dictionary = []
+        self.sorted_indices = None  # Для хранения индексов после сортировки
+
+        # Классификация согласных для русского и бурятского языков
+        self.consonant_classes = {
+            'Р': ['П', 'Б', 'В', 'Ф'],
+            'Т': ['Т', 'Д'],
+            'S': ['С', 'З', 'Ц', 'Ч', 'Ш', 'Щ'],
+            'М': ['М'],
+            'N': ['Н'],
+            'R': ['Р', 'Л'],
+            'К': ['К', 'Г', 'Х', 'Һ'],
+            'Н': ['А', 'Е', 'Ё', 'И', 'О', 'У', 'Ы', 'Э', 'Ю', 'Я', 'Ө', 'Ү']  # Гласные
+        }
 
     def initUI(self):
         self.setWindowTitle("Приложение для сравнения слов")
@@ -104,7 +117,19 @@ class WordProcessingApp(QWidget):
             self.matrix_area.setText("Пожалуйста, загрузите оба списка.")
             return
 
-        self.last_matrix = self.create_similarity_matrix(self.words_set1, self.words_set2)
+        # Преобразуем слова перед сравнением
+        transformed_set1 = [self.dolgopolsky_transform(word, transform_type=1) for word in self.words_set1]
+        transformed_set2 = [self.dolgopolsky_transform(word, transform_type=1) for word in self.words_set2]
+
+        self.last_matrix = self.create_similarity_matrix(transformed_set1, transformed_set2)
+
+        # Сортировка строк матрицы по убыванию максимальных значений
+        self.row_indices = np.argsort(-np.max(self.last_matrix, axis=1))
+        self.sorted_matrix = self.last_matrix[self.row_indices]
+
+        # Сортировка каждой строки по убыванию с сохранением индексов
+        self.sorted_indices = np.argsort(-self.sorted_matrix, axis=1)
+        self.sorted_matrix = np.take_along_axis(self.sorted_matrix, self.sorted_indices, axis=1)
 
         # Вычисление метрик
         avg_value = np.mean(self.last_matrix)
@@ -115,10 +140,6 @@ class WordProcessingApp(QWidget):
         var_matrix = np.var(self.last_matrix)
         var_row_max = np.var(row_maxes)
         var_col_max = np.var(col_maxes)
-
-        # Сортировка строк матрицы
-        self.row_indices = np.argsort(-row_maxes)
-        self.sorted_matrix = self.last_matrix[self.row_indices]
 
         avg_col_sorted = np.mean(self.sorted_matrix, axis=0)
         avg_col_sorted_text = "\n".join(
@@ -131,7 +152,7 @@ class WordProcessingApp(QWidget):
         self.dictionary = [
             {
                 "Слово A": self.words_set1[self.row_indices[i]],
-                "Слово B": self.words_set2[j],
+                "Слово B": self.words_set2[self.sorted_indices[i, j]],
                 "Коэффициент": self.sorted_matrix[i, j],
             }
             for i, j in flat_indices[:10]
@@ -174,6 +195,55 @@ class WordProcessingApp(QWidget):
                 chars2.remove(char)
         return 2 * len(common) / (len(word1) + len(word2))
 
+    def dolgopolsky_transform(self, word, transform_type):
+        """
+        Преобразование Долгопольского для слова.
+        :param word: Слово для преобразования.
+        :param transform_type: Тип преобразования (1, 2 или 3).
+        :return: Преобразованное слово.
+        """
+        if transform_type == 1:
+            # Преобразование D1: учитывает гласные и согласные
+            transformed_word = []
+            for char in word:
+                if char.upper() in self.consonant_classes['Н']:
+                    transformed_word.append('H')  # Гласные заменяем на H
+                else:
+                    for cls, letters in self.consonant_classes.items():
+                        if char.upper() in letters:
+                            transformed_word.append(cls)
+                            break
+            return ''.join(transformed_word)
+
+        elif transform_type == 2:
+            # Преобразование D2: учитывает только согласные, гласные удаляются
+            transformed_word = []
+            for char in word:
+                if char.upper() not in self.consonant_classes['Н']:
+                    for cls, letters in self.consonant_classes.items():
+                        if char.upper() in letters:
+                            transformed_word.append(cls)
+                            break
+            return ''.join(transformed_word)
+
+        elif transform_type == 3:
+            # Преобразование D3: учитывает только первые две согласные
+            transformed_word = []
+            consonant_count = 0
+            for char in word:
+                if char.upper() not in self.consonant_classes['Н']:
+                    for cls, letters in self.consonant_classes.items():
+                        if char.upper() in letters:
+                            transformed_word.append(cls)
+                            consonant_count += 1
+                            if consonant_count == 2:
+                                return ''.join(transformed_word)
+                    break
+            return ''.join(transformed_word)
+
+        else:
+            raise ValueError("Неверный тип преобразования. Допустимые значения: 1, 2, 3.")
+
     def export_to_excel(self):
         if self.last_matrix is None:
             self.matrix_area.setText("Нет данных для экспорта. Пожалуйста, обработайте слова.")
@@ -181,9 +251,13 @@ class WordProcessingApp(QWidget):
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт матрицы в Excel", "", "Excel Files (*.xlsx)")
         if file_path:
+            # Формируем строки и столбцы в формате "слово:классы"
+            index_labels = [f"{word}:{self.dolgopolsky_transform(word, transform_type=1)}" for word in self.words_set1]
+            column_labels = [f"{word}:{self.dolgopolsky_transform(word, transform_type=1)}" for word in self.words_set2]
+
             df = pd.DataFrame(self.last_matrix,
-                              index=self.words_set1,
-                              columns=self.words_set2)
+                              index=index_labels,
+                              columns=column_labels)
             df.to_excel(file_path, sheet_name="Матрица")
 
     def export_sorted_matrix_to_excel(self):
@@ -194,9 +268,14 @@ class WordProcessingApp(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(self, "Экспорт отсортированной матрицы в Excel", "",
                                                    "Excel Files (*.xlsx)")
         if file_path:
+            # Формируем строки и столбцы в формате "слово:классы"
+            index_labels = [f"{self.words_set1[i]}:{self.dolgopolsky_transform(self.words_set1[i], transform_type=1)}"
+                           for i in self.row_indices]
+            column_labels = [f"Столбец {j + 1}" for j in range(self.sorted_matrix.shape[1])]
+
             sorted_df = pd.DataFrame(self.sorted_matrix,
-                                     index=[f"Строка {i + 1}" for i in self.row_indices],
-                                     columns=[f"Столбец {j + 1}" for j in range(self.sorted_matrix.shape[1])])
+                                     index=index_labels,
+                                     columns=column_labels)
             sorted_df.to_excel(file_path, sheet_name="Отсортированная матрица")
 
     def export_dictionary_to_excel(self):
